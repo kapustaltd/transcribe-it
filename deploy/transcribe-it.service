@@ -1,0 +1,16 @@
+[Unit]
+Description=Transcribe-it Telegram bot: subtitles as text files
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=transcribe-it
+Group=transcribe-it
+WorkingDirectory=/opt/transcribe-it
+EnvironmentFile=/opt/transcribe-it/.env
+ExecStart=/opt/transcribe-it/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -95,7 +95,7 @@ def render_markdown(document: Document) -> bytes:
 
 
 def render_text(document: Document) -> bytes:
-    """Plain text: title, source and paragraphs, without timecodes or escaping."""
+    """Plain text: title, source and one timed paragraph per block, without markup."""
     blocks = [document.title, document.source]
-    blocks.extend(paragraph.text for paragraph in document.paragraphs)
+    blocks.extend(f"[{clock(paragraph.start)}] {paragraph.text}" for paragraph in document.paragraphs)
     return ("\n\n".join(blocks) + "\n").encode("utf-8")

@@ -126,7 +126,7 @@ class RenderMarkdownTest(unittest.TestCase):
 
 
 class RenderTextTest(unittest.TestCase):
-    def test_plain_text_has_title_source_and_paragraphs_without_timecodes(self):
+    def test_plain_text_has_title_source_and_timed_paragraphs_without_markup(self):
         document = Document(
             title="Кремниевая долина",
             source="https://example.com/v",
@@ -134,7 +134,7 @@ class RenderTextTest(unittest.TestCase):
         )
         self.assertEqual(
             render_text(document).decode("utf-8"),
-            "Кремниевая долина\n\nhttps://example.com/v\n\nВсем привет *друзья*.\n\nПоехали.\n",
+            "Кремниевая долина\n\nhttps://example.com/v\n\n[00:00] Всем привет *друзья*.\n\n[01:05] Поехали.\n",
         )
 
 

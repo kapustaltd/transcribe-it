@@ -86,7 +86,7 @@ class FormatPressTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Гибель Антона &lt;2&gt;", media.caption)
         self.assertIsNone(query.message.edit_media.await_args.kwargs["reply_markup"])
 
-    async def test_text_format_has_txt_name_and_no_timecodes(self):
+    async def test_text_format_has_txt_name_and_plain_timecodes(self):
         query = make_query()
         callback = main.FormatCallback(token=self.token, index=1, fmt="txt")
         with patch.object(main.subtitles, "download_cues", return_value=[Cue(65, 66, "поехали")]):
@@ -94,8 +94,8 @@ class FormatPressTest(unittest.IsolatedAsyncioTestCase):
 
         media = query.message.edit_media.await_args.kwargs["media"]
         self.assertTrue(media.media.filename.endswith(".en.txt"))
-        self.assertNotIn("**[", media.media.data.decode("utf-8"))
-        self.assertIn("поехали", media.media.data.decode("utf-8"))
+        self.assertNotIn("**", media.media.data.decode("utf-8"))
+        self.assertIn("[01:05] поехали", media.media.data.decode("utf-8"))
 
     async def test_back_returns_to_the_language_list(self):
         query = make_query()

@@ -11,7 +11,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.filters.callback_data import CallbackData
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, InputMediaDocument, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import subtitles
@@ -71,11 +71,28 @@ def progress_text(title: str, track: subtitles.Track, step: str) -> str:
 
 
 async def show_menu(menu: Message, text: str, markup=None) -> None:
+    # Once the menu carries the file, its text lives in the caption.
     # Telegram rejects an edit that changes nothing; the menu stays as it is then.
     try:
-        await menu.edit_text(text, reply_markup=markup)
+        if menu.document:
+            await menu.edit_caption(caption=text, reply_markup=markup)
+        else:
+            await menu.edit_text(text, reply_markup=markup)
     except TelegramBadRequest:
         pass
+
+
+async def show_document(menu: Message, blob: bytes, filename: str, caption: str, markup) -> None:
+    # Telegram lets a text message be replaced with a document, so the menu
+    # itself becomes the file message: caption on top, language buttons below.
+    await menu.edit_media(
+        media=InputMediaDocument(
+            media=BufferedInputFile(blob, filename=filename),
+            caption=caption,
+            parse_mode=ParseMode.HTML,
+        ),
+        reply_markup=markup,
+    )
 
 
 @router.message(CommandStart())
@@ -129,11 +146,14 @@ async def on_track(query: CallbackQuery, callback_data: TrackCallback) -> None:
         return
 
     blob = render_markdown(build_document(info, cues))
-    await menu.answer_document(
-        BufferedInputFile(blob, filename=f"{file_stem(info.title)}.{track.language}.md"),
-        caption=f"{emoji('✅')} {html.escape(info.title[:200])} · {html.escape(track_label(track))}",
-    )
-    await show_menu(menu, f"{menu_text(info.title)}\n{emoji('✅')} Отправлено: {html.escape(track_label(track))}", markup)
+    filename = f"{file_stem(info.title)}.{track.language}.md"
+    caption = f"{emoji('✅')} {html.escape(info.title[:200])} · {html.escape(track_label(track))}"
+    try:
+        await show_document(menu, blob, filename, caption, markup)
+    except TelegramBadRequest:
+        # Could not attach the file to the menu: send it below as a separate message.
+        await menu.answer_document(BufferedInputFile(blob, filename=filename), caption=caption)
+        await show_menu(menu, f"{menu_text(info.title)}\n{emoji('✅')} Отправлено: {html.escape(track_label(track))}", markup)
 
 
 async def main() -> None:

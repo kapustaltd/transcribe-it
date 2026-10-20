@@ -1,10 +1,16 @@
 import unittest
 
-from subtitles import Track, subtitles_to_text, tracks_from_info
+from subtitles import Chapter, Cue, Track, chapters_from_info, parse_cues, parse_timestamp, tracks_from_info
 
 
-class SubtitlesToTextTest(unittest.TestCase):
-    def test_strips_webvtt_header_timings_and_tags(self):
+class ParseTimestampTest(unittest.TestCase):
+    def test_supports_hours_minutes_and_comma_decimal(self):
+        self.assertAlmostEqual(parse_timestamp("01:02:03,500"), 3723.5)
+        self.assertAlmostEqual(parse_timestamp("02:03.250"), 123.25)
+
+
+class ParseCuesTest(unittest.TestCase):
+    def test_reads_vtt_timings_and_strips_tags(self):
         raw = (
             "WEBVTT\n"
             "Kind: captions\n"
@@ -16,13 +22,16 @@ class SubtitlesToTextTest(unittest.TestCase):
             "00:00:02.000 --> 00:00:04.000\n"
             "Tom &amp; Jerry\n"
         )
-        self.assertEqual(subtitles_to_text(raw), "hello world\nTom & Jerry")
+        self.assertEqual(
+            parse_cues(raw),
+            [Cue(0.0, 2.0, "hello world"), Cue(2.0, 4.0, "Tom & Jerry")],
+        )
 
-    def test_parses_srt_and_skips_numeric_index_lines(self):
+    def test_reads_srt_with_numeric_index_lines(self):
         raw = "1\n00:00:01,000 --> 00:00:02,000\n42\n\n2\n00:00:03,000 --> 00:00:04,000\nSecond line\n"
-        self.assertEqual(subtitles_to_text(raw), "42\nSecond line")
+        self.assertEqual(parse_cues(raw), [Cue(1.0, 2.0, "42"), Cue(3.0, 4.0, "Second line")])
 
-    def test_drops_consecutive_duplicates_from_rolling_auto_captions(self):
+    def test_rolling_auto_captions_keep_one_copy_and_extend_its_end(self):
         raw = (
             "WEBVTT\n\n"
             "00:00:00.000 --> 00:00:02.000\n"
@@ -34,12 +43,15 @@ class SubtitlesToTextTest(unittest.TestCase):
             "how are you\n"
             "I am fine\n"
         )
-        self.assertEqual(subtitles_to_text(raw), "hello world\nhow are you\nI am fine")
+        self.assertEqual(
+            parse_cues(raw),
+            [Cue(0.0, 4.0, "hello world"), Cue(2.0, 6.0, "how are you"), Cue(4.0, 6.0, "I am fine")],
+        )
 
     def test_ignores_note_blocks_and_empty_input(self):
         raw = "WEBVTT\n\nNOTE this is a comment\n\n00:00:00.000 --> 00:00:01.000\nVisible\n"
-        self.assertEqual(subtitles_to_text(raw), "Visible")
-        self.assertEqual(subtitles_to_text(""), "")
+        self.assertEqual(parse_cues(raw), [Cue(0.0, 1.0, "Visible")])
+        self.assertEqual(parse_cues(""), [])
 
 
 class TracksFromInfoTest(unittest.TestCase):
@@ -63,6 +75,24 @@ class TracksFromInfoTest(unittest.TestCase):
 
     def test_no_subtitles_gives_no_tracks(self):
         self.assertEqual(tracks_from_info({}), ())
+
+
+class ChaptersFromInfoTest(unittest.TestCase):
+    def test_reads_chapters_and_skips_incomplete_ones(self):
+        info = {
+            "chapters": [
+                {"start_time": 0, "end_time": 90.5, "title": "Вступление"},
+                {"start_time": 90.5, "title": "Без конца"},
+                {"start_time": 90.5, "end_time": 200, "title": ""},
+            ]
+        }
+        self.assertEqual(
+            chapters_from_info(info),
+            (Chapter(0.0, 90.5, "Вступление"), Chapter(90.5, 200.0, "")),
+        )
+
+    def test_missing_chapters_give_empty_tuple(self):
+        self.assertEqual(chapters_from_info({"chapters": None}), ())
 
 
 class TrackNameTest(unittest.TestCase):

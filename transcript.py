@@ -1,8 +1,5 @@
-import io
+import re
 from dataclasses import dataclass
-
-from docx import Document as DocxDocument
-from docx.shared import Pt, RGBColor
 
 from subtitles import Chapter, Cue, Track, VideoInfo
 
@@ -10,9 +7,7 @@ PART_SECONDS = 600
 PARAGRAPH_SECONDS = 45
 PAUSE_SECONDS = 1.5
 
-TITLE_COLOR = RGBColor(0x1B, 0x36, 0x5D)
-TEXT_COLOR = RGBColor(0x22, 0x22, 0x22)
-MUTED_COLOR = RGBColor(0x55, 0x55, 0x55)
+MARKDOWN_SPECIAL_RE = re.compile(r"([\\`*_\[\]<>])")
 
 
 @dataclass(frozen=True)
@@ -41,6 +36,10 @@ def clock(seconds: float) -> str:
     if hours:
         return f"{hours}:{minutes:02d}:{secs:02d}"
     return f"{minutes:02d}:{secs:02d}"
+
+
+def escape(text: str) -> str:
+    return MARKDOWN_SPECIAL_RE.sub(r"\\\1", text)
 
 
 def _chapter_index(moment: float, chapters: tuple[Chapter, ...]) -> int:
@@ -116,60 +115,15 @@ def build_document(info: VideoInfo, track: Track, cues: list[Cue]) -> Document:
     )
 
 
-def render_docx(document: Document) -> bytes:
-    docx = DocxDocument()
-    normal = docx.styles["Normal"]
-    normal.font.name = "Calibri"
-    normal.font.size = Pt(11)
-    normal.font.color.rgb = TEXT_COLOR
-    normal.paragraph_format.space_after = Pt(4)
-    normal.paragraph_format.line_spacing = 1.15
-
-    title = docx.add_paragraph()
-    title.paragraph_format.space_after = Pt(2)
-    run = title.add_run(document.title)
-    run.bold = True
-    run.font.size = Pt(22)
-    run.font.color.rgb = TITLE_COLOR
-    docx.core_properties.title = document.title
-
-    source = docx.add_paragraph()
-    source.paragraph_format.space_after = Pt(18)
-    run = source.add_run(document.source)
-    run.italic = True
-    run.font.size = Pt(13)
-    run.font.color.rgb = MUTED_COLOR
-
-    if document.facts:
-        meta = docx.add_paragraph()
-        meta.paragraph_format.left_indent = Pt(14.4)
-        meta.paragraph_format.space_after = Pt(20)
-        for index, fact in enumerate(document.facts):
-            run = meta.add_run(fact)
-            run.font.size = Pt(10)
-            run.font.color.rgb = RGBColor(0x44, 0x44, 0x44)
-            if index < len(document.facts) - 1:
-                run.add_break()
-
+def render_markdown(document: Document) -> bytes:
+    blocks = [
+        f"# {escape(document.title)}",
+        document.source,
+        "\n".join(f"- {escape(fact)}" for fact in document.facts),
+    ]
     filled = [part for part in document.parts if part.paragraphs]
     for number, part in enumerate(filled, start=1):
-        heading = docx.add_heading(level=1)
-        heading.paragraph_format.space_before = Pt(16)
-        heading.paragraph_format.space_after = Pt(8)
-        heading.paragraph_format.keep_with_next = True
-        run = heading.add_run(f"Часть {number}. {part.title}")
-        run.bold = True
-        run.font.name = "Calibri"
-        run.font.size = Pt(16)
-        run.font.color.rgb = TITLE_COLOR
-
+        blocks.append(f"## Часть {number}. {escape(part.title)}")
         for paragraph in part.paragraphs:
-            body = docx.add_paragraph()
-            timecode = body.add_run(f"[{clock(paragraph.start)}] ")
-            timecode.bold = True
-            timecode.font.color.rgb = MUTED_COLOR
-            body.add_run(paragraph.text)
-
-    buffer = io.BytesIO()
-    docx.save(buffer)
-    return buffer.getvalue()
+            blocks.append(f"**[{clock(paragraph.start)}]** {escape(paragraph.text)}")
+    return ("\n\n".join(blocks) + "\n").encode("utf-8")

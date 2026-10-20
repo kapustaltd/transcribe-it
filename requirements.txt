@@ -1,3 +1,2 @@
 aiogram>=3.31,<4
-python-docx>=1.2,<2
 yt-dlp>=2026.8.19

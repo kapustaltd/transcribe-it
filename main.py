@@ -15,7 +15,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import subtitles
 from premium_emoji import EMOJI, tg_emoji
-from transcript import build_document, render_docx
+from transcript import build_document, render_markdown
 
 URL_RE = re.compile(r"https?://\S+")
 MAX_CACHED_VIDEOS = 200
@@ -61,9 +61,9 @@ def file_stem(title: str) -> str:
 @router.message(CommandStart())
 async def on_start(message: Message) -> None:
     await message.answer(
-        f"{emoji('🤖')} <b>Расшифровка видео в .docx</b>\n\n"
+        f"{emoji('🤖')} <b>Расшифровка видео в .md</b>\n\n"
         f"{emoji('🔗')} Пришлите ссылку на видео — покажу, на каких языках есть субтитры.\n"
-        f"{emoji('📄')} Выберите язык, и я пришлю расшифровку: разделы по главам видео, абзацы с таймкодами."
+        f"{emoji('📄')} Выберите язык, и я пришлю расшифровку в Markdown: разделы по главам видео, абзацы с таймкодами."
     )
 
 
@@ -109,11 +109,11 @@ async def on_track(query: CallbackQuery, callback_data: TrackCallback) -> None:
         return
 
     document = build_document(info, track, cues)
-    blob = await asyncio.to_thread(render_docx, document)
+    blob = render_markdown(document)
     await status.delete()
     title = info.title[:200]
     await query.message.answer_document(
-        BufferedInputFile(blob, filename=f"{file_stem(info.title)}.{track.language}.docx"),
+        BufferedInputFile(blob, filename=f"{file_stem(info.title)}.{track.language}.md"),
         caption=f"{emoji('✅')} {html.escape(title)} · {html.escape(track_label(track))}",
     )
 

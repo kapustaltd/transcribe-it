@@ -1,7 +1,4 @@
-import io
 import unittest
-
-from docx import Document as DocxDocument
 
 from subtitles import Chapter, Cue, Track, VideoInfo
 from transcript import (
@@ -12,8 +9,9 @@ from transcript import (
     Part,
     build_document,
     clock,
+    escape,
     paragraphs,
-    render_docx,
+    render_markdown,
     split_parts,
 )
 
@@ -33,6 +31,14 @@ class ClockTest(unittest.TestCase):
     def test_minutes_and_hours(self):
         self.assertEqual(clock(65.9), "01:05")
         self.assertEqual(clock(3725), "1:02:05")
+
+
+class EscapeTest(unittest.TestCase):
+    def test_escapes_markdown_special_characters(self):
+        self.assertEqual(escape("*жирный* _курсив_ [ссылка](url)"), "\\*жирный\\* \\_курсив\\_ \\[ссылка\\](url)")
+
+    def test_plain_text_is_unchanged(self):
+        self.assertEqual(escape("Обычный текст, без разметки."), "Обычный текст, без разметки.")
 
 
 class SplitPartsTest(unittest.TestCase):
@@ -78,11 +84,7 @@ class ParagraphsTest(unittest.TestCase):
 class BuildDocumentTest(unittest.TestCase):
     def test_title_facts_and_parts(self):
         track = Track("ru-orig", auto=True)
-        document = build_document(
-            info(duration=3725),
-            track,
-            [Cue(0, 1, "привет")],
-        )
+        document = build_document(info(duration=3725), track, [Cue(0, 1, "привет")])
         self.assertEqual(document.title, "Транскрипция: Тестовое видео")
         self.assertEqual(document.source, "https://example.com/v")
         self.assertIn("Канал: Канал", document.facts)
@@ -91,7 +93,7 @@ class BuildDocumentTest(unittest.TestCase):
         self.assertEqual(document.parts, (Part("00:00–10:00", (Paragraph(0, "привет"),)),))
 
 
-class RenderDocxTest(unittest.TestCase):
+class RenderMarkdownTest(unittest.TestCase):
     def sample(self) -> Document:
         return Document(
             title="Транскрипция: Тест",
@@ -100,30 +102,32 @@ class RenderDocxTest(unittest.TestCase):
             parts=(
                 Part("Начало", (Paragraph(0, "Всем привет."), Paragraph(65, "Поехали."))),
                 Part("Пусто", ()),
-                Part("Вторая", (Paragraph(700, "Дальше."),)),
+                Part("Вторая", (Paragraph(700, "Дальше *тут* звёздочки."),)),
             ),
         )
 
-    def read(self) -> DocxDocument:
-        return DocxDocument(io.BytesIO(render_docx(self.sample())))
+    def text(self) -> str:
+        return render_markdown(self.sample()).decode("utf-8")
+
+    def test_title_source_and_facts_come_first(self):
+        lines = self.text().splitlines()
+        self.assertEqual(lines[0], "# Транскрипция: Тест")
+        self.assertEqual(lines[2], "https://example.com/v")
+        self.assertIn("- Канал: Канал", lines)
+        self.assertIn("- Язык: Русский, субтитры ручные", lines)
 
     def test_headings_are_numbered_and_empty_parts_skipped(self):
-        headings = [p.text for p in self.read().paragraphs if p.style.name == "Heading 1"]
-        self.assertEqual(headings, ["Часть 1. Начало", "Часть 2. Вторая"])
+        headings = [line for line in self.text().splitlines() if line.startswith("## ")]
+        self.assertEqual(headings, ["## Часть 1. Начало", "## Часть 2. Вторая"])
 
-    def test_timecodes_are_bold_and_text_is_plain(self):
-        paragraph = next(p for p in self.read().paragraphs if "Поехали." in p.text)
-        timecode, text = paragraph.runs[0], paragraph.runs[1]
-        self.assertEqual(timecode.text, "[01:05] ")
-        self.assertTrue(timecode.bold)
-        self.assertFalse(text.bold)
-        self.assertEqual(text.text, "Поехали.")
+    def test_paragraphs_start_with_bold_timecode(self):
+        self.assertIn("**[01:05]** Поехали.", self.text().splitlines())
 
-    def test_title_and_facts_are_rendered(self):
-        document = self.read()
-        self.assertEqual(document.paragraphs[0].text, "Транскрипция: Тест")
-        meta = next(p.text for p in document.paragraphs if p.text.startswith("Канал:"))
-        self.assertIn("Язык: Русский, субтитры ручные", meta)
+    def test_text_is_escaped(self):
+        self.assertIn("**[11:40]** Дальше \\*тут\\* звёздочки.", self.text().splitlines())
+
+    def test_paragraphs_are_separated_by_blank_lines(self):
+        self.assertIn("\n\n**[00:00]** Всем привет.\n\n**[01:05]** Поехали.\n\n", self.text())
 
 
 if __name__ == "__main__":

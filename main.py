@@ -15,6 +15,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import subtitles
 from premium_emoji import EMOJI, tg_emoji
+from transcript import TranscriptError, render_docx, structure
 
 URL_RE = re.compile(r"https?://\S+")
 MAX_CACHED_VIDEOS = 200
@@ -60,9 +61,9 @@ def file_stem(title: str) -> str:
 @router.message(CommandStart())
 async def on_start(message: Message) -> None:
     await message.answer(
-        f"{emoji('🤖')} <b>Субтитры текстовым файлом</b>\n\n"
+        f"{emoji('🤖')} <b>Расшифровка видео в .docx</b>\n\n"
         f"{emoji('🔗')} Пришлите ссылку на видео — покажу, на каких языках есть субтитры.\n"
-        f"{emoji('📄')} Выберите язык, и я пришлю субтитры файлом .txt без таймкодов."
+        f"{emoji('📄')} Выберите язык, и я пришлю структурированную расшифровку: разделы по темам, спикеры и реплики."
     )
 
 
@@ -99,16 +100,24 @@ async def on_track(query: CallbackQuery, callback_data: TrackCallback) -> None:
         return
 
     track = info.tracks[callback_data.index]
-    await query.answer("Скачиваю субтитры…")
+    await query.answer("Готовлю расшифровку…")
+    status = await query.message.answer(f"{emoji('🔎')} Скачиваю субтитры…")
+
+    async def show_progress(done: int, total: int) -> None:
+        await status.edit_text(f"{emoji('🌐')} Структурирую текст: фрагмент {done} из {total}…")
+
     try:
         text = await asyncio.to_thread(subtitles.download_text, info.url, track)
-    except subtitles.SubtitlesError as error:
-        await query.message.answer(f"{emoji('❌')} {html.escape(str(error))}")
+        transcript = await structure(text, progress=show_progress)
+    except (subtitles.SubtitlesError, TranscriptError) as error:
+        await status.edit_text(f"{emoji('❌')} {html.escape(str(error))}")
         return
 
+    document = await asyncio.to_thread(render_docx, transcript)
+    await status.delete()
     title = info.title[:200]
     await query.message.answer_document(
-        BufferedInputFile(text.encode(), filename=f"{file_stem(info.title)}.{track.language}.txt"),
+        BufferedInputFile(document, filename=f"{file_stem(info.title)}.{track.language}.docx"),
         caption=f"{emoji('✅')} {html.escape(title)} · {html.escape(track_label(track))}",
     )
 
@@ -118,6 +127,8 @@ async def main() -> None:
     token = os.environ.get("BOT_TOKEN")
     if not token:
         raise SystemExit("BOT_TOKEN is not set")
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise SystemExit("ANTHROPIC_API_KEY is not set")
 
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dispatcher = Dispatcher()

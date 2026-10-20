@@ -8,6 +8,7 @@ import secrets
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
@@ -58,6 +59,25 @@ def file_stem(title: str) -> str:
     return cleaned[:80] or "subtitles"
 
 
+def menu_text(title: str) -> str:
+    return f"{emoji('🌐')} <b>{html.escape(title)}</b>\nВыберите язык субтитров:"
+
+
+def progress_text(title: str, track: subtitles.Track, step: str) -> str:
+    return (
+        f"{emoji('🌐')} <b>{html.escape(title)}</b>\n"
+        f"{emoji('⏲')} {html.escape(step)}: {html.escape(track_label(track))}…"
+    )
+
+
+async def show_menu(menu: Message, text: str, markup=None) -> None:
+    # Telegram rejects an edit that changes nothing; the menu stays as it is then.
+    try:
+        await menu.edit_text(text, reply_markup=markup)
+    except TelegramBadRequest:
+        pass
+
+
 @router.message(CommandStart())
 async def on_start(message: Message) -> None:
     await message.answer(
@@ -86,10 +106,7 @@ async def on_text(message: Message) -> None:
         return
 
     token = remember(info)
-    await status.edit_text(
-        f"{emoji('🌐')} <b>{html.escape(info.title)}</b>\nВыберите язык субтитров:",
-        reply_markup=language_keyboard(token, info.tracks),
-    )
+    await status.edit_text(menu_text(info.title), reply_markup=language_keyboard(token, info.tracks))
 
 
 @router.callback_query(TrackCallback.filter())
@@ -100,22 +117,23 @@ async def on_track(query: CallbackQuery, callback_data: TrackCallback) -> None:
         return
 
     track = info.tracks[callback_data.index]
-    await query.answer("Готовлю расшифровку…")
-    status = await query.message.answer(f"{emoji('🔎')} Скачиваю субтитры…")
+    markup = language_keyboard(callback_data.token, info.tracks)
+    menu = query.message
+    await query.answer()
+    await show_menu(menu, progress_text(info.title, track, "Скачиваю субтитры"))
+
     try:
         cues = await asyncio.to_thread(subtitles.download_cues, info.url, track)
     except subtitles.SubtitlesError as error:
-        await status.edit_text(f"{emoji('❌')} {html.escape(str(error))}")
+        await show_menu(menu, f"{menu_text(info.title)}\n{emoji('❌')} {html.escape(str(error))}", markup)
         return
 
-    document = build_document(info, cues)
-    blob = render_markdown(document)
-    await status.delete()
-    title = info.title[:200]
-    await query.message.answer_document(
+    blob = render_markdown(build_document(info, cues))
+    await menu.answer_document(
         BufferedInputFile(blob, filename=f"{file_stem(info.title)}.{track.language}.md"),
-        caption=f"{emoji('✅')} {html.escape(title)} · {html.escape(track_label(track))}",
+        caption=f"{emoji('✅')} {html.escape(info.title[:200])} · {html.escape(track_label(track))}",
     )
+    await show_menu(menu, f"{menu_text(info.title)}\n{emoji('✅')} Отправлено: {html.escape(track_label(track))}", markup)
 
 
 async def main() -> None:

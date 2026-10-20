@@ -63,7 +63,7 @@ async def on_start(message: Message) -> None:
     await message.answer(
         f"{emoji('🤖')} <b>Расшифровка видео в .md</b>\n\n"
         f"{emoji('🔗')} Пришлите ссылку на видео — покажу, на каких языках есть субтитры.\n"
-        f"{emoji('📄')} Выберите язык, и я пришлю расшифровку в Markdown: разделы по главам видео, абзацы с таймкодами."
+        f"{emoji('📄')} Выберите язык, и я пришлю расшифровку в Markdown: абзацы с таймкодами."
     )
 
 
@@ -108,7 +108,7 @@ async def on_track(query: CallbackQuery, callback_data: TrackCallback) -> None:
         await status.edit_text(f"{emoji('❌')} {html.escape(str(error))}")
         return
 
-    document = build_document(info, track, cues)
+    document = build_document(info, cues)
     blob = render_markdown(document)
     await status.delete()
     title = info.title[:200]

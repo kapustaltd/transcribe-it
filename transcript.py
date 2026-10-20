@@ -1,7 +1,7 @@
 import re
 from dataclasses import dataclass
 
-from subtitles import Chapter, Cue, Track, VideoInfo
+from subtitles import Chapter, Cue, VideoInfo
 
 PART_SECONDS = 600
 PARAGRAPH_SECONDS = 45
@@ -17,17 +17,10 @@ class Paragraph:
 
 
 @dataclass(frozen=True)
-class Part:
-    title: str
-    paragraphs: tuple[Paragraph, ...]
-
-
-@dataclass(frozen=True)
 class Document:
     title: str
     source: str
-    facts: tuple[str, ...]
-    parts: tuple[Part, ...]
+    paragraphs: tuple[Paragraph, ...]
 
 
 def clock(seconds: float) -> str:
@@ -56,26 +49,17 @@ def split_parts(
     cues: list[Cue],
     chapters: tuple[Chapter, ...],
     duration: float = 0.0,
-) -> list[tuple[str, list[Cue]]]:
+) -> list[list[Cue]]:
     if chapters:
         buckets: list[list[Cue]] = [[] for _ in chapters]
         for cue in cues:
             buckets[_chapter_index(cue.start, chapters)].append(cue)
-        return [
-            (chapter.title or f"Глава {number}", bucket)
-            for number, (chapter, bucket) in enumerate(zip(chapters, buckets), start=1)
-            if bucket
-        ]
+        return [bucket for bucket in buckets if bucket]
 
     buckets_by_index: dict[int, list[Cue]] = {}
     for cue in cues:
         buckets_by_index.setdefault(int(cue.start // PART_SECONDS), []).append(cue)
-    parts = []
-    for index in sorted(buckets_by_index):
-        start = index * PART_SECONDS
-        end = min(start + PART_SECONDS, duration) if duration else start + PART_SECONDS
-        parts.append((f"{clock(start)}–{clock(end)}", buckets_by_index[index]))
-    return parts
+    return [buckets_by_index[index] for index in sorted(buckets_by_index)]
 
 
 def paragraphs(cues: list[Cue]) -> tuple[Paragraph, ...]:
@@ -95,35 +79,16 @@ def paragraphs(cues: list[Cue]) -> tuple[Paragraph, ...]:
     return tuple(result)
 
 
-def build_document(info: VideoInfo, track: Track, cues: list[Cue]) -> Document:
+def build_document(info: VideoInfo, cues: list[Cue]) -> Document:
     duration = info.duration or max((cue.end for cue in cues), default=0.0)
-    parts = tuple(
-        Part(title=title, paragraphs=paragraphs(group))
-        for title, group in split_parts(cues, info.chapters, duration)
-    )
-    facts = []
-    if info.uploader:
-        facts.append(f"Канал: {info.uploader}")
-    facts.append(f"Язык: {track.name}, субтитры {'автоматические' if track.auto else 'ручные'}")
-    if info.duration:
-        facts.append(f"Длительность: {clock(info.duration)}")
-    return Document(
-        title=f"Транскрипция: {info.title}",
-        source=info.url,
-        facts=tuple(facts),
-        parts=parts,
-    )
+    result: list[Paragraph] = []
+    for group in split_parts(cues, info.chapters, duration):
+        result.extend(paragraphs(group))
+    return Document(title=info.title, source=info.url, paragraphs=tuple(result))
 
 
 def render_markdown(document: Document) -> bytes:
-    blocks = [
-        f"# {escape(document.title)}",
-        document.source,
-        "\n".join(f"- {escape(fact)}" for fact in document.facts),
-    ]
-    filled = [part for part in document.parts if part.paragraphs]
-    for number, part in enumerate(filled, start=1):
-        blocks.append(f"## Часть {number}. {escape(part.title)}")
-        for paragraph in part.paragraphs:
-            blocks.append(f"**[{clock(paragraph.start)}]** {escape(paragraph.text)}")
+    blocks = [f"# {escape(document.title)}", document.source]
+    for paragraph in document.paragraphs:
+        blocks.append(f"**[{clock(paragraph.start)}]** {escape(paragraph.text)}")
     return ("\n\n".join(blocks) + "\n").encode("utf-8")

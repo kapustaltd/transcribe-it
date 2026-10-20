@@ -1,12 +1,11 @@
 import unittest
 
-from subtitles import Chapter, Cue, Track, VideoInfo
+from subtitles import Chapter, Cue, VideoInfo
 from transcript import (
     PARAGRAPH_SECONDS,
     PART_SECONDS,
     Document,
     Paragraph,
-    Part,
     build_document,
     clock,
     escape,
@@ -19,8 +18,8 @@ from transcript import (
 def info(chapters=(), duration=0.0) -> VideoInfo:
     return VideoInfo(
         url="https://example.com/v",
-        title="Тестовое видео",
-        uploader="Канал",
+        title="Кремниевая долина",
+        uploader="Кружок в круге",
         duration=duration,
         chapters=tuple(chapters),
         tracks=(),
@@ -42,23 +41,16 @@ class EscapeTest(unittest.TestCase):
 
 
 class SplitPartsTest(unittest.TestCase):
-    def test_uses_chapter_titles_and_puts_early_cues_into_first_chapter(self):
+    def test_groups_cues_by_chapter_and_puts_early_cues_into_first_chapter(self):
         chapters = (Chapter(10, 100, "Начало"), Chapter(100, 200, ""))
         cues = [Cue(2, 3, "a"), Cue(50, 51, "b"), Cue(150, 151, "c")]
-        parts = split_parts(cues, chapters)
-        self.assertEqual([title for title, _ in parts], ["Начало", "Глава 2"])
-        self.assertEqual([cue.text for cue in parts[0][1]], ["a", "b"])
-        self.assertEqual([cue.text for cue in parts[1][1]], ["c"])
+        groups = split_parts(cues, chapters)
+        self.assertEqual([[cue.text for cue in group] for group in groups], [["a", "b"], ["c"]])
 
     def test_without_chapters_splits_by_time_blocks(self):
         cues = [Cue(5, 6, "a"), Cue(PART_SECONDS + 1, PART_SECONDS + 2, "b")]
-        parts = split_parts(cues, (), duration=PART_SECONDS * 2)
-        self.assertEqual([title for title, _ in parts], ["00:00–10:00", "10:00–20:00"])
-        self.assertEqual([len(group) for _, group in parts], [1, 1])
-
-    def test_last_block_ends_at_video_duration(self):
-        parts = split_parts([Cue(5, 6, "a")], (), duration=213)
-        self.assertEqual([title for title, _ in parts], ["00:00–03:33"])
+        groups = split_parts(cues, (), duration=PART_SECONDS * 2)
+        self.assertEqual([[cue.text for cue in group] for group in groups], [["a"], ["b"]])
 
 
 class ParagraphsTest(unittest.TestCase):
@@ -82,52 +74,54 @@ class ParagraphsTest(unittest.TestCase):
 
 
 class BuildDocumentTest(unittest.TestCase):
-    def test_title_facts_and_parts(self):
-        track = Track("ru-orig", auto=True)
-        document = build_document(info(duration=3725), track, [Cue(0, 1, "привет")])
-        self.assertEqual(document.title, "Транскрипция: Тестовое видео")
+    def test_keeps_video_title_source_and_paragraphs_in_order(self):
+        document = build_document(info(duration=213), [Cue(0, 1, "привет"), Cue(1.2, 2, "мир")])
+        self.assertEqual(document.title, "Кремниевая долина")
         self.assertEqual(document.source, "https://example.com/v")
-        self.assertIn("Канал: Канал", document.facts)
-        self.assertIn("Язык: Русский, субтитры автоматические", document.facts)
-        self.assertIn("Длительность: 1:02:05", document.facts)
-        self.assertEqual(document.parts, (Part("00:00–10:00", (Paragraph(0, "привет"),)),))
+        self.assertEqual(document.paragraphs, (Paragraph(0, "привет мир"),))
+
+    def test_paragraphs_of_all_parts_are_flattened(self):
+        cues = [Cue(5, 6, "a"), Cue(PART_SECONDS + 1, PART_SECONDS + 2, "b")]
+        document = build_document(info(duration=PART_SECONDS * 2), cues)
+        self.assertEqual(document.paragraphs, (Paragraph(5, "a"), Paragraph(PART_SECONDS + 1, "b")))
 
 
 class RenderMarkdownTest(unittest.TestCase):
     def sample(self) -> Document:
         return Document(
-            title="Транскрипция: Тест",
+            title="Кремниевая долина",
             source="https://example.com/v",
-            facts=("Канал: Канал", "Язык: Русский, субтитры ручные"),
-            parts=(
-                Part("Начало", (Paragraph(0, "Всем привет."), Paragraph(65, "Поехали."))),
-                Part("Пусто", ()),
-                Part("Вторая", (Paragraph(700, "Дальше *тут* звёздочки."),)),
+            paragraphs=(
+                Paragraph(0, "Всем привет."),
+                Paragraph(65, "Поехали."),
+                Paragraph(700, "Дальше *тут* звёздочки."),
             ),
         )
 
-    def text(self) -> str:
-        return render_markdown(self.sample()).decode("utf-8")
+    def lines(self) -> list[str]:
+        return render_markdown(self.sample()).decode("utf-8").splitlines()
 
-    def test_title_source_and_facts_come_first(self):
-        lines = self.text().splitlines()
-        self.assertEqual(lines[0], "# Транскрипция: Тест")
-        self.assertEqual(lines[2], "https://example.com/v")
-        self.assertIn("- Канал: Канал", lines)
-        self.assertIn("- Язык: Русский, субтитры ручные", lines)
+    def test_starts_with_plain_title_and_source(self):
+        self.assertEqual(self.lines()[0], "# Кремниевая долина")
+        self.assertEqual(self.lines()[2], "https://example.com/v")
 
-    def test_headings_are_numbered_and_empty_parts_skipped(self):
-        headings = [line for line in self.text().splitlines() if line.startswith("## ")]
-        self.assertEqual(headings, ["## Часть 1. Начало", "## Часть 2. Вторая"])
+    def test_has_no_service_lines_or_part_headings(self):
+        text = "\n".join(self.lines())
+        self.assertNotIn("Транскрипция", text)
+        self.assertNotIn("Канал", text)
+        self.assertNotIn("Язык:", text)
+        self.assertNotIn("Длительность", text)
+        self.assertNotIn("## ", text)
+        self.assertNotIn("Часть", text)
 
     def test_paragraphs_start_with_bold_timecode(self):
-        self.assertIn("**[01:05]** Поехали.", self.text().splitlines())
+        self.assertIn("**[01:05]** Поехали.", self.lines())
 
     def test_text_is_escaped(self):
-        self.assertIn("**[11:40]** Дальше \\*тут\\* звёздочки.", self.text().splitlines())
+        self.assertIn("**[11:40]** Дальше \\*тут\\* звёздочки.", self.lines())
 
     def test_paragraphs_are_separated_by_blank_lines(self):
-        self.assertIn("\n\n**[00:00]** Всем привет.\n\n**[01:05]** Поехали.\n\n", self.text())
+        self.assertIn("\n\n**[00:00]** Всем привет.\n\n**[01:05]** Поехали.\n\n", render_markdown(self.sample()).decode("utf-8"))
 
 
 if __name__ == "__main__":

@@ -148,12 +148,13 @@ async def on_track(query: CallbackQuery, callback_data: TrackCallback) -> None:
     blob = render_markdown(build_document(info, cues))
     filename = f"{file_stem(info.title)}.{track.language}.md"
     caption = f"{emoji('✅')} {html.escape(info.title[:200])} · {html.escape(track_label(track))}"
+    # Once the file is delivered the language buttons go away: the message is final.
     try:
-        await show_document(menu, blob, filename, caption, markup)
+        await show_document(menu, blob, filename, caption, None)
     except TelegramBadRequest:
         # Could not attach the file to the menu: send it below as a separate message.
         await menu.answer_document(BufferedInputFile(blob, filename=filename), caption=caption)
-        await show_menu(menu, f"{menu_text(info.title)}\n{emoji('✅')} Отправлено: {html.escape(track_label(track))}", markup)
+        await show_menu(menu, f"{emoji('🌐')} <b>{html.escape(info.title)}</b>\n{emoji('✅')} Отправлено: {html.escape(track_label(track))}")
 
 
 async def main() -> None:

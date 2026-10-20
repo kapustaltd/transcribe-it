@@ -63,7 +63,7 @@ class OnTrackTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(media.media.filename, "Гибель Антона 2.ru.md")
         self.assertIn("Гибель Антона &lt;2&gt;", media.caption)
         self.assertIn("Русский · авто", media.caption)
-        self.assertIsNotNone(query.message.edit_media.await_args.kwargs["reply_markup"])
+        self.assertIsNone(query.message.edit_media.await_args.kwargs["reply_markup"])
 
     async def test_second_pick_on_a_file_message_edits_its_caption_first(self):
         query = make_query(document=MagicMock())
@@ -85,7 +85,7 @@ class OnTrackTest(unittest.IsolatedAsyncioTestCase):
         query.message.answer_document.assert_awaited_once()
         last = query.message.edit_text.await_args_list[-1]
         self.assertIn("Отправлено: Русский · авто", last.args[0])
-        self.assertIsNotNone(last.kwargs["reply_markup"])
+        self.assertIsNone(last.kwargs["reply_markup"])
 
     async def test_error_keeps_menu_with_language_buttons(self):
         query = make_query()

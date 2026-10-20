@@ -16,10 +16,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import subtitles
 from premium_emoji import EMOJI, tg_emoji
-from transcript import build_document, render_markdown
+from transcript import build_document, render_markdown, render_text
 
 URL_RE = re.compile(r"https?://\S+")
 MAX_CACHED_VIDEOS = 200
+FORMAT_BUTTONS = {"md": "📝 Markdown (.md)", "txt": "📄 Текст (.txt)"}
 
 router = Router()
 videos: dict[str, subtitles.VideoInfo] = {}
@@ -28,6 +29,12 @@ videos: dict[str, subtitles.VideoInfo] = {}
 class TrackCallback(CallbackData, prefix="track"):
     token: str
     index: int
+
+
+class FormatCallback(CallbackData, prefix="fmt"):
+    token: str
+    index: int
+    fmt: str  # "md", "txt" or "back" (return to the language list)
 
 
 def emoji(fallback: str) -> str:
@@ -54,6 +61,15 @@ def language_keyboard(token: str, tracks: tuple[subtitles.Track, ...]):
     return builder.as_markup()
 
 
+def format_keyboard(token: str, index: int):
+    builder = InlineKeyboardBuilder()
+    for fmt, text in FORMAT_BUTTONS.items():
+        builder.button(text=text, callback_data=FormatCallback(token=token, index=index, fmt=fmt))
+    builder.button(text="← Назад", callback_data=FormatCallback(token=token, index=index, fmt="back"))
+    builder.adjust(2, 1)
+    return builder.as_markup()
+
+
 def file_stem(title: str) -> str:
     cleaned = re.sub(r'[\\/:*?"<>|\s]+', " ", title).strip()
     return cleaned[:80] or "subtitles"
@@ -61,6 +77,14 @@ def file_stem(title: str) -> str:
 
 def menu_text(title: str) -> str:
     return f"{emoji('🌐')} <b>{html.escape(title)}</b>\nВыберите язык субтитров:"
+
+
+def format_text(title: str, track: subtitles.Track) -> str:
+    return (
+        f"{emoji('🌐')} <b>{html.escape(title)}</b>\n"
+        f"{html.escape(track_label(track))}\n"
+        "Выберите формат файла:"
+    )
 
 
 def progress_text(title: str, track: subtitles.Track, step: str) -> str:
@@ -71,36 +95,32 @@ def progress_text(title: str, track: subtitles.Track, step: str) -> str:
 
 
 async def show_menu(menu: Message, text: str, markup=None) -> None:
-    # Once the menu carries the file, its text lives in the caption.
     # Telegram rejects an edit that changes nothing; the menu stays as it is then.
     try:
-        if menu.document:
-            await menu.edit_caption(caption=text, reply_markup=markup)
-        else:
-            await menu.edit_text(text, reply_markup=markup)
+        await menu.edit_text(text, reply_markup=markup)
     except TelegramBadRequest:
         pass
 
 
-async def show_document(menu: Message, blob: bytes, filename: str, caption: str, markup) -> None:
+async def show_document(menu: Message, blob: bytes, filename: str, caption: str) -> None:
     # Telegram lets a text message be replaced with a document, so the menu
-    # itself becomes the file message: caption on top, language buttons below.
+    # itself becomes the file message. No keyboard: the message is final.
     await menu.edit_media(
         media=InputMediaDocument(
             media=BufferedInputFile(blob, filename=filename),
             caption=caption,
             parse_mode=ParseMode.HTML,
         ),
-        reply_markup=markup,
+        reply_markup=None,
     )
 
 
 @router.message(CommandStart())
 async def on_start(message: Message) -> None:
     await message.answer(
-        f"{emoji('🤖')} <b>Расшифровка видео в .md</b>\n\n"
+        f"{emoji('🤖')} <b>Расшифровка видео</b>\n\n"
         f"{emoji('🔗')} Пришлите ссылку на видео — покажу, на каких языках есть субтитры.\n"
-        f"{emoji('📄')} Выберите язык, и я пришлю расшифровку в Markdown: абзацы с таймкодами."
+        f"{emoji('📄')} Выберите язык и формат: Markdown с таймкодами или простой текст."
     )
 
 
@@ -134,23 +154,50 @@ async def on_track(query: CallbackQuery, callback_data: TrackCallback) -> None:
         return
 
     track = info.tracks[callback_data.index]
-    markup = language_keyboard(callback_data.token, info.tracks)
+    await query.answer()
+    await show_menu(
+        query.message,
+        format_text(info.title, track),
+        format_keyboard(callback_data.token, callback_data.index),
+    )
+
+
+@router.callback_query(FormatCallback.filter())
+async def on_format(query: CallbackQuery, callback_data: FormatCallback) -> None:
+    info = videos.get(callback_data.token)
+    if info is None or callback_data.index >= len(info.tracks):
+        await query.answer("Ссылка устарела, пришлите её ещё раз", show_alert=True)
+        return
+
     menu = query.message
+    if callback_data.fmt == "back":
+        await query.answer()
+        await show_menu(menu, menu_text(info.title), language_keyboard(callback_data.token, info.tracks))
+        return
+
+    track = info.tracks[callback_data.index]
     await query.answer()
     await show_menu(menu, progress_text(info.title, track, "Скачиваю субтитры"))
 
     try:
         cues = await asyncio.to_thread(subtitles.download_cues, info.url, track)
     except subtitles.SubtitlesError as error:
-        await show_menu(menu, f"{menu_text(info.title)}\n{emoji('❌')} {html.escape(str(error))}", markup)
+        await show_menu(
+            menu,
+            f"{format_text(info.title, track)}\n{emoji('❌')} {html.escape(str(error))}",
+            format_keyboard(callback_data.token, callback_data.index),
+        )
         return
 
-    blob = render_markdown(build_document(info, cues))
-    filename = f"{file_stem(info.title)}.{track.language}.md"
+    document = build_document(info, cues)
+    if callback_data.fmt == "txt":
+        blob, extension = render_text(document), "txt"
+    else:
+        blob, extension = render_markdown(document), "md"
+    filename = f"{file_stem(info.title)}.{track.language}.{extension}"
     caption = f"{emoji('✅')} {html.escape(info.title[:200])} · {html.escape(track_label(track))}"
-    # Once the file is delivered the language buttons go away: the message is final.
     try:
-        await show_document(menu, blob, filename, caption, None)
+        await show_document(menu, blob, filename, caption)
     except TelegramBadRequest:
         # Could not attach the file to the menu: send it below as a separate message.
         await menu.answer_document(BufferedInputFile(blob, filename=filename), caption=caption)

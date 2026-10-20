@@ -92,3 +92,10 @@ def render_markdown(document: Document) -> bytes:
     for paragraph in document.paragraphs:
         blocks.append(f"**[{clock(paragraph.start)}]** {escape(paragraph.text)}")
     return ("\n\n".join(blocks) + "\n").encode("utf-8")
+
+
+def render_text(document: Document) -> bytes:
+    """Plain text: title, source and paragraphs, without timecodes or escaping."""
+    blocks = [document.title, document.source]
+    blocks.extend(paragraph.text for paragraph in document.paragraphs)
+    return ("\n\n".join(blocks) + "\n").encode("utf-8")

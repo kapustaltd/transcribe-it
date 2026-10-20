@@ -11,6 +11,7 @@ from transcript import (
     escape,
     paragraphs,
     render_markdown,
+    render_text,
     split_parts,
 )
 
@@ -122,6 +123,19 @@ class RenderMarkdownTest(unittest.TestCase):
 
     def test_paragraphs_are_separated_by_blank_lines(self):
         self.assertIn("\n\n**[00:00]** Всем привет.\n\n**[01:05]** Поехали.\n\n", render_markdown(self.sample()).decode("utf-8"))
+
+
+class RenderTextTest(unittest.TestCase):
+    def test_plain_text_has_title_source_and_paragraphs_without_timecodes(self):
+        document = Document(
+            title="Кремниевая долина",
+            source="https://example.com/v",
+            paragraphs=(Paragraph(0, "Всем привет *друзья*."), Paragraph(65, "Поехали.")),
+        )
+        self.assertEqual(
+            render_text(document).decode("utf-8"),
+            "Кремниевая долина\n\nhttps://example.com/v\n\nВсем привет *друзья*.\n\nПоехали.\n",
+        )
 
 
 if __name__ == "__main__":
